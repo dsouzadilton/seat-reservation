@@ -16,10 +16,11 @@ public class AuthFilter extends OncePerRequestFilter {
     public static final String USER_ID_ATTRIBUTE = "authenticatedUserId";
 
     private static final Set<String> PUBLIC_PATHS = Set.of(
-            "/actuator/health",
-            "/actuator/health/liveness",
-            "/actuator/health/readiness"
-    );
+        "/actuator/health",
+        "/actuator/health/liveness",
+        "/actuator/health/readiness",
+        "/actuator/prometheus"
+	);
 
     @Override
     protected void doFilterInternal(

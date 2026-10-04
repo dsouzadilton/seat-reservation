@@ -19,6 +19,9 @@ import com.dilton.paytm.repository.ReservationResultRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -38,14 +41,17 @@ public class ReservationService {
     private final ReservationSeatRepository reservationSeatRepository;
     private final UserShowLimitRepository userShowLimitRepository;
 	private final ReservationResultRepository reservationResultRepository;
-
+	private final ReservationMetrics reservationMetrics;
+	private static final Logger log = LoggerFactory.getLogger(ReservationService.class);
+		
     public ReservationService(
             ShowRepository showRepository,
             SeatRepository seatRepository,
             ReservationRepository reservationRepository,
             ReservationSeatRepository reservationSeatRepository,
             UserShowLimitRepository userShowLimitRepository,
-			ReservationResultRepository reservationResultRepository
+			ReservationResultRepository reservationResultRepository,
+			ReservationMetrics reservationMetrics
     ) {
         this.showRepository = showRepository;
         this.seatRepository = seatRepository;
@@ -53,6 +59,7 @@ public class ReservationService {
         this.reservationSeatRepository = reservationSeatRepository;
         this.userShowLimitRepository = userShowLimitRepository;
 		this.reservationResultRepository = reservationResultRepository;
+		this.reservationMetrics = reservationMetrics;
     }
 
     @Transactional
@@ -93,6 +100,16 @@ public class ReservationService {
 			if (!existing.getBodyHash().equals(bodyHash)) {
 				throw new IllegalStateException("Idempotency key already used with a different request");
 			}
+			reservationMetrics.idempotentReplay();
+
+			log.info(
+				"event=idempotent_replay showId={} userId={} reservationId={} idempotencyKey={}",
+				showId,
+				userId,
+				existing.getId(),
+				request.idempotencyKey()
+			);
+
 			return buildResponse(existing);
 		}
 		
@@ -111,6 +128,16 @@ public class ReservationService {
 					"Idempotency key already used with a different request"
 				);
 			}
+
+			reservationMetrics.idempotentReplay();
+
+			log.info(
+				"event=idempotent_replay showId={} userId={} reservationId={} idempotencyKey={}",
+				showId,
+				userId,
+				existing.getId(),
+				request.idempotencyKey()
+			);
 
 			return buildResponse(existing);
 		}
@@ -144,6 +171,16 @@ public class ReservationService {
 				declinedSeats.add(
 					new DeclinedSeat(seat.getSeatNumber(), "seat_taken")
 				);
+
+				reservationMetrics.seatTakenDeclined();
+
+				log.info(
+					"event=reservation_declined showId={} userId={} seat={} reason=seat-taken",
+					showId,
+					userId,
+					seat.getSeatNumber()
+				);
+
 				continue;
 			}
 
@@ -151,6 +188,16 @@ public class ReservationService {
 				declinedSeats.add(
 					new DeclinedSeat(seat.getSeatNumber(), "per_user_limit")
 				);
+
+				reservationMetrics.perUserLimitDeclined();
+
+				log.info(
+					"event=reservation_declined showId={} userId={} seat={} reason=per-user-limit",
+					showId,
+					userId,
+					seat.getSeatNumber()
+				);
+
 				continue;
 			}
 
@@ -181,7 +228,7 @@ public class ReservationService {
 		reservation.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
 		reservation = reservationRepository.save(reservation);
-		
+		reservationMetrics.reservationConfirmed();
 		for (Seat seat : confirmedSeats) {
 			ReservationSeat reservationSeat = new ReservationSeat();
 
@@ -220,6 +267,17 @@ public class ReservationService {
 		String status = declinedSeats.isEmpty()
 			? "confirmed"
 			: "partially_confirmed";
+			
+		log.info(
+			"event=reservation_confirmed showId={} userId={} reservationId={} confirmedSeats={} declinedSeats={} amountPaise={} status={}",
+			showId,
+			userId,
+			reservation.getId(),
+			confirmedSeatNumbers,
+			declinedSeats,
+			reservation.getAmountPaise(),
+			status
+		);
 
 		return new ReserveResponse(
 			reservation.getId(),
@@ -295,6 +353,16 @@ public class ReservationService {
 		reservation.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
 		reservationRepository.save(reservation);
+
+		log.info(
+			"event=reservation_cancelled reservationId={} showId={} userId={} releasedSeats={}",
+			reservationId,
+			reservation.getShowId(),
+			userId,
+			seats.stream()
+				.map(Seat::getSeatNumber)
+				.toList()
+		);
 	}
 	
 	private String calculateBodyHash(List<String> seats) {
