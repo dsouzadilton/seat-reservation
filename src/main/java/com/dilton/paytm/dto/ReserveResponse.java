@@ -7,7 +7,8 @@ public record ReserveResponse(
         UUID reservationId,
         Long showId,
         String userId,
-        List<String> seats,
+        List<String> confirmedSeats,
+        List<DeclinedSeat> declinedSeats,
         Long amountPaise,
         String status
 ) {

@@ -1,6 +1,9 @@
 package com.dilton.paytm.service;
 
 import com.dilton.paytm.dto.ReserveRequest;
+import com.dilton.paytm.dto.DeclinedSeat;
+import com.dilton.paytm.dto.ReserveResponse;
+import com.dilton.paytm.entity.ReservationResult;
 import com.dilton.paytm.entity.Show;
 import com.dilton.paytm.entity.Reservation;
 import com.dilton.paytm.entity.UserShowLimit;
@@ -11,6 +14,7 @@ import com.dilton.paytm.repository.ReservationSeatRepository;
 import com.dilton.paytm.repository.SeatRepository;
 import com.dilton.paytm.repository.ShowRepository;
 import com.dilton.paytm.repository.UserShowLimitRepository;
+import com.dilton.paytm.repository.ReservationResultRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,23 +37,26 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ReservationSeatRepository reservationSeatRepository;
     private final UserShowLimitRepository userShowLimitRepository;
+	private final ReservationResultRepository reservationResultRepository;
 
     public ReservationService(
             ShowRepository showRepository,
             SeatRepository seatRepository,
             ReservationRepository reservationRepository,
             ReservationSeatRepository reservationSeatRepository,
-            UserShowLimitRepository userShowLimitRepository
+            UserShowLimitRepository userShowLimitRepository,
+			ReservationResultRepository reservationResultRepository
     ) {
         this.showRepository = showRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
         this.reservationSeatRepository = reservationSeatRepository;
         this.userShowLimitRepository = userShowLimitRepository;
+		this.reservationResultRepository = reservationResultRepository;
     }
 
     @Transactional
-	public Reservation reserve(Long showId, String userId, ReserveRequest request) {
+	public ReserveResponse reserve(Long showId, String userId, ReserveRequest request) {
 		Show show = showRepository.findById(showId)
 				.orElseThrow(() -> new IllegalArgumentException("Show not found"));
 
@@ -72,10 +79,6 @@ public class ReservationService {
 			throw new IllegalArgumentException("At least one valid seat is required");
 		}
 		
-		if (requestedSeats.size() > show.getPerUserLimit()) {
-			throw new IllegalArgumentException("Cannot reserve more than " + show.getPerUserLimit() + " seats");
-		}
-		
 		String bodyHash = calculateBodyHash(requestedSeats);
 
 		Reservation existing = reservationRepository
@@ -90,7 +93,7 @@ public class ReservationService {
 			if (!existing.getBodyHash().equals(bodyHash)) {
 				throw new IllegalStateException("Idempotency key already used with a different request");
 			}
-			return existing;
+			return buildResponse(existing);
 		}
 		
 		String userShowLockKey = "show:" + showId + ":user:" + userId;
@@ -109,7 +112,7 @@ public class ReservationService {
 				);
 			}
 
-			return existing;
+			return buildResponse(existing);
 		}
 		UserShowLimit userShowLimit = userShowLimitRepository
         .findByShowIdAndUserId(showId, userId)
@@ -132,19 +135,22 @@ public class ReservationService {
 		}
 		
 		List<Seat> confirmedSeats = new ArrayList<>();
-		List<Seat> declinedSeats = new ArrayList<>();
+		List<DeclinedSeat> declinedSeats = new ArrayList<>();
 
 		int allocatedCount = currentSeatCount;
 
 		for (Seat seat : seats) {
-
 			if (!"available".equals(seat.getStatus())) {
-				declinedSeats.add(seat);
+				declinedSeats.add(
+					new DeclinedSeat(seat.getSeatNumber(), "seat_taken")
+				);
 				continue;
 			}
 
 			if (allocatedCount >= show.getPerUserLimit()) {
-				declinedSeats.add(seat);
+				declinedSeats.add(
+					new DeclinedSeat(seat.getSeatNumber(), "per_user_limit")
+				);
 				continue;
 			}
 
@@ -184,7 +190,46 @@ public class ReservationService {
 
 			reservationSeatRepository.save(reservationSeat);
 		}
-		return reservation;
+		
+		for (String seatNumber : requestedSeats) {
+			ReservationResult result = new ReservationResult();
+			result.setReservationId(reservation.getId());
+			result.setSeatNumber(seatNumber);
+
+			boolean confirmed = confirmedSeats.stream()
+				.anyMatch(seat -> seat.getSeatNumber().equals(seatNumber));
+
+			result.setResult(confirmed ? "confirmed" : "declined");
+
+			if (!confirmed) {
+				DeclinedSeat declined = declinedSeats.stream()
+					.filter(d -> d.seat().equals(seatNumber))
+					.findFirst()
+					.orElseThrow();
+
+				result.setReason(declined.reason());
+			}
+
+			reservationResultRepository.save(result);
+		}
+		
+		List<String> confirmedSeatNumbers = confirmedSeats.stream()
+			.map(Seat::getSeatNumber)
+			.toList();
+
+		String status = declinedSeats.isEmpty()
+			? "confirmed"
+			: "partially_confirmed";
+
+		return new ReserveResponse(
+			reservation.getId(),
+			reservation.getShowId(),
+			reservation.getUserId(),
+			confirmedSeatNumbers,
+			declinedSeats,
+			reservation.getAmountPaise(),
+			status
+		);
 	}
 	
 	private String calculateBodyHash(List<String> seats) {
@@ -204,5 +249,38 @@ public class ReservationService {
 		} catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException("SHA-256 not available", e);
 		}
+	}
+	
+	private ReserveResponse buildResponse(Reservation reservation) {
+
+		List<ReservationResult> results =
+			reservationResultRepository.findByReservationId(reservation.getId());
+
+		List<String> confirmedSeats = results.stream()
+			.filter(r -> "confirmed".equals(r.getResult()))
+			.map(ReservationResult::getSeatNumber)
+			.toList();
+
+		List<DeclinedSeat> declinedSeats = results.stream()
+			.filter(r -> "declined".equals(r.getResult()))
+			.map(r -> new DeclinedSeat(
+				r.getSeatNumber(),
+				r.getReason()
+			))
+			.toList();
+
+		String status = declinedSeats.isEmpty()
+			? "confirmed"
+			: "partially_confirmed";
+
+		return new ReserveResponse(
+			reservation.getId(),
+			reservation.getShowId(),
+			reservation.getUserId(),
+			confirmedSeats,
+			declinedSeats,
+			reservation.getAmountPaise(),
+			status
+		);
 	}
 }
