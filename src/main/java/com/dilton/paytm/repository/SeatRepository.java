@@ -21,4 +21,17 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
             @Param("showId") Long showId,
             @Param("seatNumbers") List<String> seatNumbers
     );
+	
+	List<Seat> findByShowIdOrderBySeatNumber(Long showId);
+	
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("""
+		SELECT s
+		FROM Seat s
+		WHERE s.id IN :seatIds
+		ORDER BY s.seatNumber
+	""")
+	List<Seat> findSeatsForUpdateByIds(
+			@Param("seatIds") List<Long> seatIds
+	);
 }

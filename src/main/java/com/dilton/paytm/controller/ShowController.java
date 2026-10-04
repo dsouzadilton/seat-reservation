@@ -1,6 +1,7 @@
 package com.dilton.paytm.controller;
 
 import com.dilton.paytm.entity.Show;
+import com.dilton.paytm.dto.ShowResponse;
 import com.dilton.paytm.service.ShowService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,6 +29,15 @@ public class ShowController {
 
         return ResponseEntity.status(201).body(show);
     }
+	
+	@GetMapping("/{showId}")
+	public ResponseEntity<ShowResponse> getShow(
+			@PathVariable Long showId
+	) {
+		return ResponseEntity.ok(
+				showService.getShow(showId)
+		);
+	}
 
     public record CreateShowRequest(
             String name,

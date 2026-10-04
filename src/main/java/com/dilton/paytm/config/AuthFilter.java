@@ -8,11 +8,18 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Set;
 
 @Component
 public class AuthFilter extends OncePerRequestFilter {
 
     public static final String USER_ID_ATTRIBUTE = "authenticatedUserId";
+
+    private static final Set<String> PUBLIC_PATHS = Set.of(
+            "/actuator/health",
+            "/actuator/health/liveness",
+            "/actuator/health/readiness"
+    );
 
     @Override
     protected void doFilterInternal(
@@ -20,6 +27,21 @@ public class AuthFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
+
+        String path = request.getRequestURI();
+
+        // Public endpoints
+        if (isPublicPath(path)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        // Show availability is public
+        if ("GET".equalsIgnoreCase(request.getMethod())
+                && path.matches("/shows/\\d+")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         String authorization = request.getHeader("Authorization");
 
@@ -46,5 +68,9 @@ public class AuthFilter extends OncePerRequestFilter {
         request.setAttribute(USER_ID_ATTRIBUTE, userId);
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isPublicPath(String path) {
+        return PUBLIC_PATHS.contains(path);
     }
 }

@@ -10,9 +10,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.UUID;
 
 @RestController
-@RequestMapping("/shows")
 public class ReservationController {
 
     private final ReservationService reservationService;
@@ -21,7 +21,7 @@ public class ReservationController {
         this.reservationService = reservationService;
     }
 
-    @PostMapping("/{showId}/reserve")
+    @PostMapping("/shows/{showId}/reserve")
     public ResponseEntity<ReserveResponse> reserve(
             @PathVariable Long showId,
             @RequestBody ReserveRequest request,
@@ -41,4 +41,17 @@ public class ReservationController {
                 .status(HttpStatus.CREATED)
                 .body(response);
     }
+	
+	@PostMapping("/reservations/{reservationId}/cancel")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void cancel(
+			@PathVariable UUID reservationId,
+			HttpServletRequest httpRequest
+	) {
+		String userId = (String) httpRequest.getAttribute(
+				AuthFilter.USER_ID_ATTRIBUTE
+		);
+
+		reservationService.cancel(reservationId, userId);
+	}
 }

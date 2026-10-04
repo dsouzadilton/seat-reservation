@@ -232,6 +232,71 @@ public class ReservationService {
 		);
 	}
 	
+	@Transactional
+	public void cancel(UUID reservationId, String userId) {
+
+		Reservation reservation = reservationRepository
+				.findByIdForUpdate(reservationId)
+				.orElseThrow(() ->
+						new IllegalArgumentException("Reservation not found"));
+
+		if (!reservation.getUserId().equals(userId)) {
+			throw new IllegalStateException(
+					"You are not allowed to cancel this reservation"
+			);
+		}
+
+		if ("cancelled".equals(reservation.getStatus())) {
+			return;
+		}
+
+		List<ReservationSeat> reservationSeats =
+				reservationSeatRepository.findByReservationId(reservationId);
+
+		List<Long> seatIds = reservationSeats.stream()
+				.map(ReservationSeat::getSeatId)
+				.sorted()
+				.toList();
+
+		List<Seat> seats =
+				seatRepository.findSeatsForUpdateByIds(seatIds);
+
+		String userShowLockKey =
+				"show:" + reservation.getShowId() + ":user:" + userId;
+
+		userShowLimitRepository.acquireUserShowLock(userShowLockKey);
+
+		UserShowLimit userShowLimit =
+				userShowLimitRepository
+						.findByShowIdAndUserId(
+								reservation.getShowId(),
+								userId
+						)
+						.orElseThrow(() ->
+								new IllegalStateException(
+										"User show limit record not found"
+								));
+
+		for (Seat seat : seats) {
+			if ("confirmed".equals(seat.getStatus())) {
+				seat.setStatus("available");
+			}
+		}
+
+		int cancelledCount = seats.size();
+
+		userShowLimit.setSeatCount(
+				Math.max(0, userShowLimit.getSeatCount() - cancelledCount)
+		);
+
+		userShowLimitRepository.save(userShowLimit);
+
+		reservation.setStatus("cancelled");
+		reservation.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+		reservationRepository.save(reservation);
+	}
+	
 	private String calculateBodyHash(List<String> seats) {
 		List<String> normalizedSeats = seats.stream()
 				.sorted()
