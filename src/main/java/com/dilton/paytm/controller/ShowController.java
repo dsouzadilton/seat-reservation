@@ -6,6 +6,7 @@ import com.dilton.paytm.service.ShowService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 @RestController
@@ -42,6 +43,8 @@ public class ShowController {
     public record CreateShowRequest(
             String name,
             List<String> seats,
+				
+			@JsonProperty("price_paise")
             Long pricePaise
     ) {
     }
